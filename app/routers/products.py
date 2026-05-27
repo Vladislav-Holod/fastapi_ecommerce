@@ -1,11 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select, update
-from sqlalchemy.orm import Session
-from app.models.products import Product as ProductModel
-from app.models.categories import Category as CategoryModel
-from app.schemas import Product as ProductSchema, ProductCreate
-from app.db_depends import get_db
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models import Product as ProductModel
+from app.models import Category as CategoryModel
+from app.schemas import Product as ProductSchema, ProductCreate
+from app.db_depends import get_async_db
+from app.models import User as UserModel
+from app.auth import get_current_seller
 # Создаём маршрутизатор для товаров
 router = APIRouter(
     prefix="/products",
@@ -14,106 +16,118 @@ router = APIRouter(
 
 
 @router.get("/", response_model=list[ProductSchema], status_code=status.HTTP_200_OK)
-async def get_all_products(db: Session = Depends(get_db)):
+async def get_all_products(db: AsyncSession = Depends(get_async_db)):
     """
     Возвращает список всех товаров.
     """
     stmt = select(ProductModel).where(ProductModel.is_active == True)
-    result = db.scalars(stmt).all()
+    result = (await db.scalars(stmt)).all()
     return result
 
 
 @router.post("/", response_model=ProductSchema, status_code=status.HTTP_201_CREATED)
-async def create_product(product: ProductCreate, db: Session = Depends(get_db)):
+async def create_product(product: ProductCreate,
+                         db: AsyncSession = Depends(get_async_db),
+                         current_user:UserModel= Depends(get_current_seller)):
     """
     Создаёт новый товар.
     """
     stmt = select(CategoryModel).where(CategoryModel.id == product.category_id).where(
         CategoryModel.is_active == True)
-    result = db.scalars(stmt).first()
+    result = (await db.scalars(stmt)).all()
     if result is None:
         raise HTTPException(status_code=400, detail='Category not found or inactive')
 
-    db_product = ProductModel(**product.model_dump())
+    db_product = ProductModel(**product.model_dump(),seller_id=current_user.id)
     db.add(db_product)
-    db.commit()
-    db.refresh(db_product)
+    await db.commit()
+    await db.refresh(db_product) # Для получения id и is_active из базы
     return db_product
 
 
 @router.get("/category/{category_id}", response_model=list[ProductSchema], status_code=status.HTTP_200_OK)
-async def get_products_by_category(category_id: int, db: Session = Depends(get_db)):
+async def get_products_by_category(category_id: int, db: AsyncSession = Depends(get_async_db)):
     """
     Возвращает список товаров в указанной категории по её ID.
     """
     stmt_category = select(CategoryModel).where(CategoryModel.id == category_id).where(CategoryModel.is_active == True)
-    result = db.scalars(stmt_category).first()
+    result = (await db.scalars(stmt_category)).first()
     if result is None:
         raise HTTPException(status_code=404, detail='Category not found or inactive')
     stmt_product = select(ProductModel).where(ProductModel.category_id == category_id).where(
         ProductModel.is_active == True)
-    result = db.scalars(stmt_product).all()
+    result = (await db.scalars(stmt_product)).all()
     return result
 
 
 @router.get("/{product_id}", response_model=ProductSchema, status_code=status.HTTP_200_OK)
-async def get_product(product_id: int, db: Session = Depends(get_db)):
+async def get_product(product_id: int, db: AsyncSession = Depends(get_async_db)):
     """
     Возвращает детальную информацию о товаре по его ID.
     """
     stmt_product = select(ProductModel).where(ProductModel.id == product_id).where(ProductModel.is_active == True)
-    product = db.scalars(stmt_product).first()
+    product = (await db.scalars(stmt_product)).first()
     if product is None:
         raise HTTPException(status_code=404, detail='Product not found or inactive')
     stmt_category_active = select(CategoryModel).where(CategoryModel.id == product.category_id).where(
         CategoryModel.is_active == True)
-    category_is_active = db.scalars(stmt_category_active).first()
+    category_is_active = (await db.scalars(stmt_category_active)).first()
     if category_is_active is None:
         raise HTTPException(status_code=400, detail='Category not found or inactive')
     return product
 
 
-@router.put("/{product_id}", response_model=ProductSchema, status_code=status.HTTP_200_OK)
-async def update_product(product_id: int, product: ProductCreate, db: Session = Depends(get_db)):
+@router.put("/{product_id}", response_model=ProductSchema)
+async def update_product(
+    product_id: int,
+    product: ProductCreate,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: UserModel = Depends(get_current_seller)
+):
     """
-    Обновляет товар по его ID.
+    Обновляет товар, если он принадлежит текущему продавцу (только для 'seller').
     """
-    stmt_active = select(ProductModel).where(ProductModel.id == product_id).where(ProductModel.is_active == True)
-    result_product = db.scalars(stmt_active).first()
-    if result_product is None:
-        raise HTTPException(status_code=404, detail="Product not found or inactive")
-
-    stmt_category_active = select(CategoryModel).where(CategoryModel.id == product.category_id).where(
-        CategoryModel.is_active == True)
-    result_category = db.scalars(stmt_category_active).first()
-
-    if result_category is None:
-        raise HTTPException(status_code=400, detail="Category not found or inactive")
-
-    db.execute(
-        update(ProductModel).where(ProductModel.id == product_id).
-        values(**product.model_dump()
-        )
+    result = await db.scalars(select(ProductModel).where(ProductModel.id == product_id, ProductModel.is_active == True))
+    db_product = result.first()
+    if not db_product:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
+    if db_product.seller_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can only update your own products")
+    category_result = await db.scalars(
+        select(CategoryModel).where(CategoryModel.id == product.category_id, CategoryModel.is_active == True)
     )
-    db.commit()
-    db.refresh(result_product)
-    return result_product
+    if not category_result.first():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Category not found or inactive")
+    await db.execute(
+        update(ProductModel).where(ProductModel.id == product_id).values(**product.model_dump())
+    )
+    await db.commit()
+    await db.refresh(db_product)  # Для консистентности данных
+    return db_product
 
 
-@router.delete("/{product_id}", response_model=dict, status_code=status.HTTP_200_OK)
-async def delete_product(product_id: int, db: Session = Depends(get_db)):
+@router.delete("/{product_id}", response_model=ProductSchema, status_code=status.HTTP_200_OK)
+async def delete_product(product_id: int,
+                         db: AsyncSession = Depends(get_async_db),
+                         current_user: UserModel = Depends(get_current_seller)):
     """
     Удаляет товар по его ID.
     """
     stmt_active_product = select(ProductModel).where(ProductModel.id == product_id).where(
         ProductModel.is_active == True)
-    result_product_active = db.scalars(stmt_active_product).first()
+    result_product_active = (await db.scalars(stmt_active_product)).first()
     if result_product_active is None:
         raise HTTPException(status_code=404, detail='Product not found or inactive')
-    db.execute(
+    if result_product_active.seller_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can only delete your own products")
+
+    await db.execute(
         update(ProductModel).where(ProductModel.id == product_id).
         values(is_active=False))
 
-    db.commit()
-    return {"status": "success", "message": "Product marked as inactive"}
+    await db.commit()
+    await db.refresh(result_product_active)
+    return result_product_active
+
+
 
