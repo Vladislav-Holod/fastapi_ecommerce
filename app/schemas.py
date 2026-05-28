@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field, ConfigDict, EmailStr
 from decimal import Decimal
-
+from datetime import datetime
 
 class CategoryCreate(BaseModel):
     """
@@ -51,13 +51,50 @@ class Product(ProductCreate):
 
 
 class UserCreate(BaseModel):
+    """
+    Модель для создания пользователя
+    """
     email: EmailStr = Field(description='Email пользователя')
-    password:str = Field(min_length=8,description='Пароль (минимум 8 символов)')
-    role:str = Field(default='buyer',pattern="^(buyer|seller)$",description="Роль: 'buyer' или 'seller'")
+    password: str = Field(min_length=8, description='Пароль (минимум 8 символов)')
+    role: str = Field(default='buyer', pattern="^(buyer|seller)$", description="Роль: 'buyer' или 'seller'")
+
 
 class User(BaseModel):
-    id:int
-    email:EmailStr
-    is_active:bool
-    role:str
-    model_config =ConfigDict(from_attributes=True)
+    """
+    Модель для ответа с данными пользователя
+    используется в GET запросах
+    """
+    id: int =Field(description='Уникальный идентификатор пользователя')
+    email: EmailStr = Field(description='Email пользователя')
+    is_active: bool = Field(description='Активность пользователя ')
+    role: str = Field(default='buyer', pattern="^(buyer|seller)$", description="Роль: 'buyer' или 'seller'")
+    model_config = ConfigDict(from_attributes=True)
+
+
+class RefreshTokenRequest(BaseModel):
+    """
+    Модель для REFRESH jwt токена
+    """
+    refresh_token: str = Field('Refresh JWT Tokens')
+
+
+class ReviewsCrete(BaseModel):
+    """
+    Модель для создания отзыва
+    """
+    product_id: int = Field(description='Уникальный идентификатор продукта')
+    comment: str | None =Field(description='Содержания отзыва (комментарий) можно без ')
+    grade: int = Field(ge=1, le=5,description='Оценка отзыва от 1 до 5')
+
+class Review(BaseModel):
+    """
+    Модель для ответа с данными отзыва
+    используется для GET запросах
+    """
+    id: int = Field(description='Уникальный идентификатор отзыва')
+    user_id: int = Field(description='Уникальный идентификатор юзера')
+    product_id: int = Field(description='Уникальный идентификатор продукта')
+    comment: str = Field(description='Содержания отзыва (комментарий)')
+    comment_date: datetime = Field(description='Время создания отзыва')
+    grade: int = Field(description='Оценка отзыва от 1 до 5')
+    is_active: bool = Field('Активность отзыва')

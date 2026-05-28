@@ -2,9 +2,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models import Reviews as ReviewsModel
 from app.models import Product as ProductModel
 from app.models import Category as CategoryModel
-from app.schemas import Product as ProductSchema, ProductCreate
+from app.schemas import Product as ProductSchema, ProductCreate,Review
 from app.db_depends import get_async_db
 from app.models import User as UserModel
 from app.auth import get_current_seller
@@ -23,6 +24,23 @@ async def get_all_products(db: AsyncSession = Depends(get_async_db)):
     stmt = select(ProductModel).where(ProductModel.is_active == True)
     result = (await db.scalars(stmt)).all()
     return result
+
+@router.get("/{product_id}/reviews", response_model=list[Review])
+async def get_reviews_product(product_id: int,
+                              db: AsyncSession = Depends(get_async_db)):
+    stmt_product = select(ProductModel).where(ProductModel.id == product_id,
+                                              ProductModel.is_active == True)
+
+    product = (await db.scalars(stmt_product)).first()
+    if product is None:
+        raise HTTPException(status_code=404,
+                            detail='Not Found')
+
+    stmt_reviews = select(ReviewsModel).where(ReviewsModel.product_id == product_id,
+                                              ReviewsModel.is_active == True)
+    reviews = (await db.scalars(stmt_reviews)).all()
+    return reviews
+
 
 
 @router.post("/", response_model=ProductSchema, status_code=status.HTTP_201_CREATED)
