@@ -9,6 +9,7 @@ from app.schemas import Product as ProductSchema, ProductCreate,Review
 from app.db_depends import get_async_db
 from app.models import User as UserModel
 from app.auth import get_current_seller
+
 # Создаём маршрутизатор для товаров
 router = APIRouter(
     prefix="/products",
