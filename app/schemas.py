@@ -1,6 +1,8 @@
 from pydantic import BaseModel, Field, ConfigDict, EmailStr
 from decimal import Decimal
 from datetime import datetime
+from typing import Annotated
+from fastapi import Form
 
 
 class CategoryCreate(BaseModel):
@@ -34,10 +36,26 @@ class ProductCreate(BaseModel):
                       description="Название товара (3-100 символов)")
     description: str | None = Field(None, max_length=500,
                                     description="Описание товара (до 500 символов)")
-    price: Decimal = Field(..., gt=0, description="Цена товара (больше 0)", decimal_places=2)
-    image_url: str | None = Field(None, max_length=200, description="URL изображения товара")
+    price: Decimal = Field(gt=0, description="Цена товара (больше 0)", decimal_places=2)
     stock: int = Field(..., ge=0, description="Количество товара на складе (0 или больше)")
     category_id: int = Field(..., description="ID категории, к которой относится товар")
+
+    @classmethod
+    def as_form(
+            cls,
+            name: Annotated[str, Form(...)],
+            price: Annotated[Decimal, Form(...)],
+            stock: Annotated[int, Form(...)],
+            category_id: Annotated[int, Form(...)],
+            description: Annotated[str | None, Form()] = None,
+    ) -> "ProductCreate":
+        return cls(
+            name=name,
+            description=description,
+            price=price,
+            stock=stock,
+            category_id=category_id,
+        )
 
 
 class Product(ProductCreate):
@@ -46,6 +64,12 @@ class Product(ProductCreate):
     Используется в GET-запросах.
     """
     id: int = Field(..., description="Уникальный идентификатор товара")
+    name: str = Field(..., description='Имя товара')
+    description: str = Field(..., description='Описания товара')
+    price: int = Field(..., description='Цена товара')
+    image_url: str = Field(..., description='Ссылка на картинку товара')
+    stock: int = Field(..., description='Количество товаров ')
+    category_id: int = Field(..., description='id Категории')
     is_active: bool = Field(..., description="Активность товара")
 
     model_config = ConfigDict(from_attributes=True)
@@ -57,10 +81,11 @@ class ProductList(BaseModel):
     """
     items: list[Product] = Field(description='Товары для текущей страницы')
     total: int = Field(ge=0, description='Общее количество товаров')
-    page:int = Field(ge=1,description='Номер текущий страницы')
-    page_size:int = Field(ge=1,description='Количество элементов на странице')
+    page: int = Field(ge=1, description='Номер текущий страницы')
+    page_size: int = Field(ge=1, description='Количество элементов на странице')
 
     model_config = ConfigDict(from_attributes=True)
+
 
 class UserCreate(BaseModel):
     """
@@ -112,17 +137,21 @@ class Review(BaseModel):
     grade: int = Field(description='Оценка отзыва от 1 до 5')
     is_active: bool = Field('Активность отзыва')
 
+
 class CartItemBase(BaseModel):
     product_id: int = Field(description="ID товара")
     quantity: int = Field(ge=1, description="Количество товара")
+
 
 class CartItemCreate(CartItemBase):
     """Модель для добавления нового товара в корзину."""
     pass
 
+
 class CartItemUpdate(BaseModel):
     """Модель для обновления количества товара в корзине."""
     quantity: int = Field(..., ge=1, description="Новое количество товара")
+
 
 class CartItem(BaseModel):
     """Товар в корзине с данными продукта."""
@@ -131,6 +160,7 @@ class CartItem(BaseModel):
     product: Product = Field(..., description="Информация о товаре")
 
     model_config = ConfigDict(from_attributes=True)
+
 
 class Cart(BaseModel):
     """Полная информация о корзине пользователя."""
@@ -141,6 +171,7 @@ class Cart(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+
 class OrderItem(BaseModel):
     id: int = Field(..., description="ID позиции заказа")
     product_id: int = Field(..., description="ID товара")
@@ -150,6 +181,7 @@ class OrderItem(BaseModel):
     product: Product | None = Field(None, description="Полная информация о товаре")
 
     model_config = ConfigDict(from_attributes=True)
+
 
 class Order(BaseModel):
     id: int = Field(..., description="ID заказа")
@@ -162,6 +194,7 @@ class Order(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+
 class OrderList(BaseModel):
     items: list[Order] = Field(..., description="Заказы на текущей странице")
     total: int = Field(ge=0, description="Общее количество заказов")
@@ -169,3 +202,18 @@ class OrderList(BaseModel):
     page_size: int = Field(ge=1, description="Размер страницы")
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class OrderCheckoutResponse(BaseModel):
+    order: Order = Field(..., description="Созданный заказ")
+    confirmation_url: str | None = Field(
+        None,
+        description="URL для перехода на оплату в YooKassa",
+    )
+
+
+class OrderStatus(BaseModel):
+    order_id: int = Field(...,description='ID Заказа')
+    status: str = Field(...,description='Статус заказа')
+    paid_at :datetime = Field(...,description='Время заказа')
+    message :str =Field(...,description='Сообщения пользователю ')
